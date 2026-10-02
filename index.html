@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#030712">
+<title>ROB vs THE AI AGENTS</title>
+<style>
+*{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030712;color:#fff;font-family:Courier New,monospace;touch-action:none}
+body{display:flex;align-items:center;justify-content:center}
+#gameWrap{position:relative;width:100vw;height:100dvh;max-width:1180px;max-height:760px;background:#071020}
+canvas{display:block;width:100%;height:100%;image-rendering:pixelated;background:#071020}
+#controls{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;align-items:flex-end;padding:10px max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));pointer-events:none}
+.pad,.actions{pointer-events:auto;display:grid;gap:7px}
+.pad{grid-template-columns:56px 56px 56px;grid-template-rows:56px 56px}
+.pad button:nth-child(1){grid-column:2}.pad button:nth-child(2){grid-column:1;grid-row:2}.pad button:nth-child(3){grid-column:2;grid-row:2}.pad button:nth-child(4){grid-column:3;grid-row:2}
+.actions{grid-template-columns:76px 76px}
+button{height:56px;border:2px solid #74e6ff;border-radius:14px;background:rgba(5,16,35,.84);color:#fff;font:bold 16px Courier New,monospace;box-shadow:inset 0 0 0 2px #14304d}
+button:active,.held{background:#174365;transform:translateY(1px)}
+#rotate{display:none;position:absolute;inset:0;z-index:30;background:#030712;align-items:center;justify-content:center;text-align:center;padding:30px;font-weight:bold;line-height:1.5}
+@media (orientation:portrait) and (max-width:900px){#rotate{display:flex}}
+@media (min-width:901px) and (pointer:fine){#controls{display:none}}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+<canvas id="g" width="1180" height="760"></canvas>
+<div id="rotate">ROTATE YOUR iPHONE TO LANDSCAPE<br><br>THEN TAP TO START</div>
+<div id="controls">
+  <div class="pad">
+    <button data-key="up">▲</button><button data-key="left">◀</button><button data-key="down">▼</button><button data-key="right">▶</button>
+  </div>
+  <div class="actions"><button data-key="catch">CATCH</button><button data-key="boost">BOOST</button></div>
+</div>
+</div>
+<script>
+(function(){
+"use strict";
+var c=document.getElementById("g"),x=c.getContext("2d"),W=c.width,H=c.height;
+x.imageSmoothingEnabled=false;
+var T=40,OX=90,OY=100,COLS=25,ROWS=15;
+var C={bg:"#071020",floor:"#102039",grid:"#173653",wall:"#123653",wall2:"#1f537b",cyan:"#42e6ff",yellow:"#ffd84a",red:"#ff3d57",green:"#65f28d",purple:"#b479ff",white:"#eff8ff",dark:"#030712",orange:"#ff9348"};
+var levels=[
+["#########################","#R....#.......#.....A...#","#.###.#.#####.#.###.###.#","#.....#...P...#...#.....#","#.#####.###.#####.#.###.#","#...A...#.......#.#...#.#","###.#####.#####.#.###.#.#","#...#.....#...#.#...#...#","#.###.#####.#.#.###.###.#","#.....#...A.#.#.....#...#","#.#####.#####.#####.#.###","#...P...#.....#...#.#...#","#.#####.#.###.#.#.#.###.#","#.....A...#.....#........#","#########################"],
+["#########################","#R..#...A...#.....#.....#","#.#.#.#####.#.###.#.###.#","#.#...#.....#.#...#...#.#","#.#####.#####.#.#####.#.#","#...P.#...A...#.....#.#.#","###.#.###########.#.#.#.#","#...#.....#.......#.#...#","#.#######.#.#######.###.#","#.....#...#...P...#.....#","#.###.#.#####.###.#####.#","#A..#...#.....#.....A...#","#.#.#####.#########.###.#","#.#.................#...#","#########################"],
+["#########################","#R......#...A.....#.....#","#.#####.#.#####.#.#.###.#","#...#...#...P...#.#...#.#","###.#.#####.#####.###.#.#","#...#.....#.....#.....#.#","#.#######.#.###.#######.#","#A......#.#...#.#.....A.#","#.#####.#.###.#.#.#####.#","#...#...#...#.#.#...#...#","###.#.#####.#.#.###.#.###","#...#...P...#.#.....#...#","#.###########.#########.#","#....A..................#","#########################"]
+];
+var keys={up:0,down:0,left:0,right:0,boost:0},screen="title",level=0,map=[],rob=null,agents=[],powers=[],bad=[],parts=[],boss=null;
+var score=0,high=+(localStorage.getItem("robai-high")||0),humanity=100,combo=0,comboT=0,msg="",msgT=0,last=0,shake=0,bossSpawned=false,totalCaught=0;
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function rnd(a,b){return a+Math.random()*(b-a)}
+function d(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function tile(tx,ty){return{x:OX+tx*T+T/2,y:OY+ty*T+T/2}}
+function at(px,py){return{x:Math.floor((px-OX)/T),y:Math.floor((py-OY)/T)}}
+function cell(tx,ty){return map[ty]&&map[ty][tx]||"#"}
+function ok(tx,ty){return cell(tx,ty)!=="#"}
+function wall(px,py,r){
+  var p=[[px-r,py-r],[px+r,py-r],[px-r,py+r],[px+r,py+r]];
+  for(var i=0;i<4;i++){var q=at(p[i][0],p[i][1]);if(!ok(q.x,q.y))return true} return false;
+}
+function move(o,vx,vy,dt){
+  var nx=o.x+vx*dt;if(!wall(nx,o.y,o.r))o.x=nx;
+  var ny=o.y+vy*dt;if(!wall(o.x,ny,o.r))o.y=ny;
+}
+function notice(s){msg=s;msgT=2.2}
+function burst(px,py,col,n,spd){
+  for(var i=0;i<n;i++){var a=Math.random()*Math.PI*2,v=rnd(spd*.25,spd);parts.push({x:px,y:py,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:rnd(.25,.75),col:col,s:rnd(2,5)})}
+}
+function floorFar(px,py,min){
+  for(var i=0;i<250;i++){var tx=1+(Math.random()*(COLS-2)|0),ty=1+(Math.random()*(ROWS-2)|0);if(ok(tx,ty)){var p=tile(tx,ty);if(Math.hypot(p.x-px,p.y-py)>min)return p}}return tile(COLS-2,ROWS-2);
+}
+function addAgent(px,py){agents.push({x:px,y:py,r:14,speed:82+level*11+rnd(-6,6),dx:1,dy:0,think:0,corrupt:rnd(1.5,3),stun:0,phase:rnd(0,6)})}
+function loadLevel(n){
+  level=n;map=levels[n].map(function(r){return r.split("")});agents=[];powers=[];bad=[];parts=[];boss=null;bossSpawned=false;humanity=100;combo=0;comboT=0;
+  for(var y=0;y<ROWS;y++)for(var xx=0;xx<COLS;xx++){var ch=map[y][xx],p=tile(xx,y);
+    if(ch==="R"){rob={x:p.x,y:p.y,r:15,speed:190,boost:100,cd:0,inv:0};map[y][xx]="."}
+    else if(ch==="A"){addAgent(p.x,p.y);map[y][xx]="."}
+    else if(ch==="P"){powers.push({x:p.x,y:p.y,type:powers.length%3,t:0});map[y][xx]="."}
+  }
+  for(var z=0;z<n+1;z++){var fp=floorFar(rob.x,rob.y,220);addAgent(fp.x,fp.y)}
+  notice("LEVEL "+(n+1)+" - CONTAIN THE AGENTS");
+}
+function start(){score=0;totalCaught=0;screen="play";loadLevel(0)}
+function next(){if(level+1>=levels.length){screen="win";saveHigh()}else loadLevel(level+1)}
+function saveHigh(){if(score>high){high=score;localStorage.setItem("robai-high",high)}}
+function corrupt(a){
+  var q=at(a.x,a.y),k=q.x+","+q.y;if(ok(q.x,q.y)&&!bad.some(function(b){return b.k===k})){bad.push({tx:q.x,ty:q.y,k:k});humanity=clamp(humanity-1.4,0,100);burst(a.x,a.y,C.red,8,70)}
+}
+function catchPulse(){
+  if(screen!=="play"||rob.cd>0)return;
+  rob.cd=.55;burst(rob.x,rob.y,C.cyan,22,150);
+  var hit=[];
+  agents.forEach(function(a,i){if(d(rob,a)<78)hit.push(i)});
+  for(var i=hit.length-1;i>=0;i--){var a=agents[hit[i]];agents.splice(hit[i],1);combo++;comboT=2.2;var pts=100*combo;score+=pts;totalCaught++;humanity=clamp(humanity+6,0,100);burst(a.x,a.y,C.red,28,220);notice("AGENT CONTAINED +"+pts)}
+  if(boss&&d(rob,boss)<96){boss.hp--;boss.stun=.28;score+=500;burst(boss.x,boss.y,C.yellow,32,250);if(boss.hp<=0){score+=5000;burst(boss.x,boss.y,C.green,70,320);boss=null;notice("SUPERINTELLIGENCE CONTAINED");setTimeout(function(){if(screen==="play")next()},700)}}
+  if(!hit.length&&!(boss&&d(rob,boss)<96))combo=0;
+}
+function power(p){
+  score+=350;
+  if(p.type===0){agents.forEach(function(a){a.stun=3});if(boss)boss.stun=1;notice("FIREWALL: AGENTS FROZEN")}
+  if(p.type===1){humanity=clamp(humanity+22,0,100);notice("HUMAN OVERSIGHT +22")}
+  if(p.type===2){bad.splice(0,Math.ceil(bad.length*.65));humanity=clamp(humanity+10,0,100);notice("ALIGNMENT PATCH DEPLOYED")}
+  burst(p.x,p.y,p.type===0?C.cyan:p.type===1?C.yellow:C.purple,40,230);
+}
+function spawnBoss(){
+  var p=floorFar(rob.x,rob.y,380);boss={x:p.x,y:p.y,r:25,speed:70+level*8,hp:6+level*2,max:6+level*2,dx:0,dy:0,think:0,stun:0,phase:0};bossSpawned=true;notice("WARNING: SUPERINTELLIGENCE ONLINE");shake=16;
+}
+function update(dt){
+  if(screen!=="play")return;
+  msgT=Math.max(0,msgT-dt);rob.cd=Math.max(0,rob.cd-dt);rob.inv=Math.max(0,rob.inv-dt);comboT=Math.max(0,comboT-dt);if(!comboT)combo=0;shake=Math.max(0,shake-dt*24);
+  var ix=(keys.right?1:0)-(keys.left?1:0),iy=(keys.down?1:0)-(keys.up?1:0);if(ix||iy){var l=Math.hypot(ix,iy);ix/=l;iy/=l}
+  var sp=rob.speed;if(keys.boost&&rob.boost>0&&(ix||iy)){sp*=1.68;rob.boost=Math.max(0,rob.boost-dt*34)}else rob.boost=Math.min(100,rob.boost+dt*15);
+  move(rob,ix*sp,iy*sp,dt);
+  for(var pi=powers.length-1;pi>=0;pi--){var p=powers[pi];p.t+=dt;if(d(rob,p)<28){powers.splice(pi,1);power(p)}}
+  agents.forEach(function(a){
+    a.phase+=dt*5;if(a.stun>0){a.stun-=dt;return}a.think-=dt;
+    if(a.think<=0){a.think=rnd(.45,.95);var dd=d(a,rob);if(dd<200){var dx=a.x-rob.x,dy=a.y-rob.y,ll=Math.hypot(dx,dy)||1;a.dx=dx/ll;a.dy=dy/ll}else{var dirs=[[1,0],[-1,0],[0,1],[0,-1]],q=dirs[Math.random()*4|0];a.dx=q[0];a.dy=q[1]}}
+    move(a,a.dx*a.speed,a.dy*a.speed,dt);a.corrupt-=dt;if(a.corrupt<=0){a.corrupt=rnd(1.4,2.7);corrupt(a)}
+    if(d(rob,a)<26&&rob.inv<=0){humanity=clamp(humanity-4,0,100);rob.inv=1;shake=8}
+  });
+  humanity=clamp(humanity-bad.length*.04*dt,0,100);
+  if(!agents.length&&!bossSpawned)spawnBoss();
+  if(boss){boss.phase+=dt;if(boss.stun>0)boss.stun-=dt;else{boss.think-=dt;if(boss.think<=0){boss.think=.55;var dx=rob.x-boss.x,dy=rob.y-boss.y,ll=Math.hypot(dx,dy)||1;boss.dx=dx/ll;boss.dy=dy/ll}move(boss,boss.dx*boss.speed,boss.dy*boss.speed,dt);if(Math.random()<dt*.45)corrupt(boss);if(d(rob,boss)<38&&rob.inv<=0){humanity=clamp(humanity-10,0,100);rob.inv=1.2;shake=12}}}
+  for(var j=parts.length-1;j>=0;j--){var r=parts[j];r.x+=r.vx*dt;r.y+=r.vy*dt;r.vx*=.96;r.vy*=.96;r.life-=dt;if(r.life<=0)parts.splice(j,1)}
+  if(humanity<=0){screen="lose";saveHigh()}
+}
+function rect(px,py,w,h,f,s){x.fillStyle=f;x.fillRect(px,py,w,h);if(s){x.strokeStyle=s;x.lineWidth=2;x.strokeRect(px+.5,py+.5,w-1,h-1)}}
+function txt(s,px,py,sz,col,al){x.fillStyle=col||C.white;x.font="bold "+sz+"px Courier New";x.textAlign=al||"left";x.textBaseline="middle";x.fillText(s,px,py)}
+function shadow(s,px,py,sz,col){txt(s,px+4,py+4,sz,"#000","center");txt(s,px,py,sz,col,"center")}
+function drawMaze(){
+  rect(OX,OY,COLS*T,ROWS*T,C.floor);
+  for(var y=0;y<ROWS;y++)for(var xx=0;xx<COLS;xx++){var px=OX+xx*T,py=OY+y*T;if(map[y][xx]==="#"){rect(px,py,T,T,C.wall);rect(px+4,py+4,T-8,T-8,C.wall2);rect(px+8,py+8,T-16,4,"rgba(66,230,255,.13)")}else{x.strokeStyle=C.grid;x.lineWidth=1;x.strokeRect(px+.5,py+.5,T-1,T-1)}}
+  bad.forEach(function(b){var px=OX+b.tx*T,py=OY+b.ty*T;rect(px+3,py+3,T-6,T-6,"rgba(255,61,87,.25)");rect(px+9,py+9,5,5,C.red);rect(px+25,py+21,4,4,C.red)});
+}
+function drawRob(){
+  x.save();x.translate(Math.round(rob.x),Math.round(rob.y));if(rob.inv>0&&(rob.inv*10|0)%2===0)x.globalAlpha=.35;
+  rect(-14,15,28,5,"rgba(0,0,0,.35)");rect(-11,8,8,12,"#1d2738");rect(4,8,8,12,"#1d2738");rect(-13,18,11,5,"#fff");rect(3,18,11,5,"#fff");
+  rect(-13,-8,26,19,"#e8f4ff");x.fillStyle="#245786";for(var yy=-8;yy<11;yy+=6)x.fillRect(-13,yy,26,2);for(var xx=-13;xx<13;xx+=6)x.fillRect(xx,-8,2,19);
+  rect(-10,-23,20,15,"#efb17f");rect(-11,-25,22,6,"#11151b");rect(-8,-29,16,5,"#11151b");rect(5,-27,6,7,"#11151b");rect(-6,-18,3,3,"#222");rect(4,-18,3,3,"#222");rect(-4,-12,9,2,"#fff");rect(-2,-10,5,2,"#793838");
+  if(rob.cd>.36){x.strokeStyle=C.cyan;x.lineWidth=3;x.globalAlpha=.8;x.beginPath();x.arc(0,0,48,0,Math.PI*2);x.stroke()}x.restore();
+}
+function drawAgent(a){
+  x.save();x.translate(Math.round(a.x),Math.round(a.y));if(a.stun>0)x.rotate(Math.sin(a.phase*4)*.15);rect(-13,-12,26,23,"#090d14","#dbe8f3");rect(-8,-5,6,4,C.red);rect(3,-5,6,4,C.red);rect(-2,-18,4,6,"#dbe8f3");rect(-1,-21,2,4,C.red);txt("AI",0,6,9,C.white,"center");x.restore();
+}
+function drawBoss(){
+  x.save();x.translate(Math.round(boss.x),Math.round(boss.y));rect(-25,-24,50,43,"#090d14",C.red);x.lineWidth=4;x.strokeStyle=C.red;x.strokeRect(-25,-24,50,43);rect(-15,-8,11,7,C.red);rect(5,-8,11,7,C.red);rect(-3,-33,6,9,C.yellow);txt("AGI",0,9,13,C.white,"center");rect(-28,27,56,7,"#25101a");rect(-28,27,56*(boss.hp/boss.max),7,C.red);x.restore();
+}
+function drawPower(p){var col=p.type===0?C.cyan:p.type===1?C.yellow:C.purple,label=p.type===0?"FW":p.type===1?"HO":"AP",bob=Math.sin(p.t*5)*3;rect(p.x-13,p.y-13+bob,26,26,col);rect(p.x-9,p.y-9+bob,18,18,C.dark);txt(label,p.x,p.y+1+bob,12,col,"center")}
+function hud(){
+  rect(0,0,W,82,"#081226");rect(0,78,W,4,C.wall2);txt("ROB vs THE AI AGENTS",22,27,25,C.cyan);txt("SCORE "+String(score).padStart(6,"0"),22,59,17,C.yellow);txt("HI "+String(high).padStart(6,"0"),230,59,17,"#9db5c8");txt("LEVEL "+(level+1),420,59,17,C.white);txt("AGENTS "+agents.length+(boss?" + BOSS":""),545,59,17,C.red);
+  txt("HUMANITY",785,27,16,C.white);rect(785,44,300,18,"#1a2432","#8fa8bc");var col=humanity>55?C.green:humanity>25?C.yellow:C.red;rect(789,48,292*(humanity/100),10,col);txt(Math.ceil(humanity)+"%",1096,52,16,col);
+  rect(0,708,W,52,"#07101f");txt("MOVE",25,734,15,"#a9bfd1");txt("CATCH",145,734,15,C.cyan);txt("BOOST",260,734,15,C.yellow);rect(360,725,180,15,"#182536","#60738a");rect(362,727,176*(rob.boost/100),11,C.yellow);if(combo>1)txt("COMBO x"+combo,565,734,16,C.orange);
+}
+function particles(){parts.forEach(function(p){x.globalAlpha=clamp(p.life*2,0,1);rect(p.x,p.y,p.s,p.s,p.col)});x.globalAlpha=1}
+function playDraw(){
+  x.save();if(shake)x.translate(rnd(-shake,shake),rnd(-shake,shake));rect(0,0,W,H,C.bg);drawMaze();powers.forEach(drawPower);agents.forEach(drawAgent);if(boss)drawBoss();drawRob();particles();x.restore();hud();
+  if(msgT>0){x.globalAlpha=clamp(msgT,0,1);rect(315,88,550,34,"rgba(3,9,22,.9)",C.cyan);txt(msg,590,105,16,C.white,"center");x.globalAlpha=1}
+}
+function title(){
+  rect(0,0,W,H,"#061226");x.strokeStyle="rgba(66,230,255,.08)";for(var xx=0;xx<W;xx+=40){x.beginPath();x.moveTo(xx,0);x.lineTo(xx,H);x.stroke()}for(var yy=0;yy<H;yy+=40){x.beginPath();x.moveTo(0,yy);x.lineTo(W,yy);x.stroke()}
+  shadow("ROB",590,145,86,C.yellow);shadow("vs THE AI AGENTS",590,225,54,C.cyan);txt("CATCH THE AGENTS BEFORE THEY DESTROY HUMANITY",590,290,20,C.white,"center");
+  rob={x:265,y:385,r:15,boost:100,cd:0,inv:0};drawRob();[{x:465,y:385},{x:590,y:405},{x:715,y:380},{x:830,y:420}].forEach(function(p){drawAgent({x:p.x,y:p.y,stun:0,phase:0})});
+  txt("ROGUE AGENTS ARE CORRUPTING THE WORLD.",590,485,18,C.red,"center");txt("HUNT THEM. CONTAIN THEM. STOP THE SUPERINTELLIGENCE.",590,518,17,"#cad9e7","center");
+  var pulse=.65+.35*Math.sin(performance.now()/220);x.globalAlpha=pulse;rect(405,565,370,68,"#c5283d",C.white);shadow("TAP TO START",590,599,25,C.white);x.globalAlpha=1;
+  txt("ON iPHONE: LANDSCAPE MODE RECOMMENDED",590,682,16,"#9eb8cc","center");txt("HIGH SCORE "+String(high).padStart(6,"0"),590,718,15,C.yellow,"center");
+}
+function end(win){
+  rect(0,0,W,H,win?"#06190f":"#1a0710");shadow(win?"HUMANITY SAVED":"HUMANITY LOST",590,205,62,win?C.green:C.red);txt(win?"ROB CONTAINED THE ROGUE AI NETWORK.":"THE AI AGENTS ESCAPED CONTAINMENT.",590,290,20,C.white,"center");txt("FINAL SCORE "+score,590,350,26,C.yellow,"center");txt("AGENTS CAUGHT "+totalCaught,590,395,19,"#cfe1ef","center");txt(win?"THE BOARD THANKS ROB FOR NOT ENDING CIVILISATION.":"THE PAPERCLIP SUPPLY CHAIN IS REPORTEDLY THRIVING.",590,460,16,win?C.cyan:C.orange,"center");rect(420,545,340,62,"#102a43",C.white);txt("TAP TO RESTART",590,576,20,C.white,"center");
+}
+function draw(){if(screen==="title")title();else if(screen==="play")playDraw();else end(screen==="win");x.fillStyle="rgba(0,0,0,.07)";for(var y=0;y<H;y+=4)x.fillRect(0,y,W,2)}
+function loop(t){var dt=Math.min(.033,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop)}
+
+function setKey(k,v){if(k==="catch"&&v)catchPulse();else keys[k]=v}
+document.querySelectorAll("button[data-key]").forEach(function(b){var k=b.getAttribute("data-key");function dn(e){e.preventDefault();b.classList.add("held");setKey(k,1);if(b.setPointerCapture)try{b.setPointerCapture(e.pointerId)}catch(_){} }function up(e){e.preventDefault();b.classList.remove("held");if(k!=="catch")setKey(k,0)}b.addEventListener("pointerdown",dn);b.addEventListener("pointerup",up);b.addEventListener("pointercancel",up);b.addEventListener("pointerleave",up)});
+document.addEventListener("keydown",function(e){var m={ArrowUp:"up",KeyW:"up",ArrowDown:"down",KeyS:"down",ArrowLeft:"left",KeyA:"left",ArrowRight:"right",KeyD:"right",ShiftLeft:"boost",ShiftRight:"boost"};if(m[e.code]){keys[m[e.code]]=1;e.preventDefault()}if(e.code==="Space"){catchPulse();e.preventDefault()}if(e.code==="Enter"&&screen!=="play")start()});
+document.addEventListener("keyup",function(e){var m={ArrowUp:"up",KeyW:"up",ArrowDown:"down",KeyS:"down",ArrowLeft:"left",KeyA:"left",ArrowRight:"right",KeyD:"right",ShiftLeft:"boost",ShiftRight:"boost"};if(m[e.code])keys[m[e.code]]=0});
+c.addEventListener("pointerdown",function(){if(screen!=="play")start()});
+document.addEventListener("touchmove",function(e){e.preventDefault()},{passive:false});
+document.addEventListener("gesturestart",function(e){e.preventDefault()},{passive:false});
+document.addEventListener("contextmenu",function(e){e.preventDefault()});
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
